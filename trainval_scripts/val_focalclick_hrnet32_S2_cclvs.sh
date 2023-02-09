@@ -1,12 +1,13 @@
 python scripts/evaluate_model.py FocalClick\
   --model_dir=./experiments/focalclick/hrnet32_S2_cclvs/000_hrnet32_S2_cclvs/checkpoints/\
-  --checkpoint=last_checkpoint\
+  --checkpoint=weights/hrnet32.pth\
   --infer-size=256\
-  --datasets=GrabCut,Berkeley,DAVIS\
-  --gpus=1\
-  --n-clicks=20\
+  --datasets=COCO\
+  --gpus=0\
+  --n-clicks=10\
   --target-iou=0.90\
   --thresh=0.5\
+  --multi_instance
   #--vis
   #--target-iou=0.95\
 

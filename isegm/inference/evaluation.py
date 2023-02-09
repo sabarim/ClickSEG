@@ -3,6 +3,8 @@ from time import time
 import numpy as np
 import torch
 import os
+
+from isegm.data.sample import DSample
 from isegm.inference import utils
 from isegm.inference.clicker import Clicker
 import shutil
@@ -18,8 +20,18 @@ except NameError:
     from tqdm import tqdm
 
 
-def evaluate_dataset(dataset, predictor, vis = True, vis_path = './experiments/vis_val/',**kwargs):
+def print_data_stats(dataset):
+    num_instances = 0
+    for index in tqdm(range(len(dataset)), leave=False):
+        num_instances += len(dataset.get_sample(index).objects_ids)
+    print(f"Number of instances in the input data is {num_instances}")
+
+
+def evaluate_dataset_multi_instance(dataset, predictor, vis = True, vis_path = './experiments/vis_val/',**kwargs):
     all_ious = []
+    all_ious_per_image = []
+    avg_click_times_per_image = []
+    instance_count = 0
     if vis:
         save_dir =  vis_path + dataset.name + '/'
         #save_dir = '/home/admin/workspace/project/data/logs/'+ dataset.name + '/'
@@ -30,17 +42,104 @@ def evaluate_dataset(dataset, predictor, vis = True, vis_path = './experiments/v
         save_dir = None
 
     start_time = time()
+    print(f"Number of images in dataset is {len(dataset)}")
+    max_clicks_per_objects = kwargs['max_clicks']
+    clicks_per_image = []
+    failed_images = []
+    per_image_times = []
+    # print_data_stats(dataset)
     for index in tqdm(range(len(dataset)), leave=False):
+    # for index in tqdm(range(3), leave=False):
+        per_image_start_time = time()
         sample = dataset.get_sample(index)
+        max_clicks_per_image = len(sample.objects_ids) * max_clicks_per_objects
+        all_ious_per_image.append({'ious': [], 'num_instances': len(sample.objects_ids),
+                                   'max_clicks': max_clicks_per_image, 'filename': sample.filename})
+        # if len(sample._objects) > 0:
+        clicks_per_image.append(max_clicks_per_image)
+        ids = np.random.permutation(sample.objects_ids)
+        for obj_id in ids:
+            if max_clicks_per_image == 0:
+                break
+            gt_mask = sample.get_object_mask(obj_id)
+            kwargs['max_clicks'] = max_clicks_per_image
+            _, sample_ious, _, click_times = evaluate_sample(sample.image, gt_mask, sample.init_mask, predictor,
+                                                sample_id=index, vis=vis, save_dir=save_dir,
+                                                index=index, **kwargs)
+            # print(f"Average time per click {np.mean(click_times)}")
 
-        _, sample_ious, _ = evaluate_sample(sample.image, sample.gt_mask, sample.init_mask, predictor,
-                                            sample_id=index, vis= vis, save_dir = save_dir,
-                                            index = index, **kwargs)
-        all_ious.append(sample_ious)
+            # max_clicks_per_image-=len(sample_ious)
+            sample_ious = sample_ious.tolist()
+            all_ious.append(sample_ious)
+            # dict that stores per image click counts
+            all_ious_per_image[-1]['ious'].append(sample_ious)
+            avg_click_times_per_image.append(np.mean(click_times))
+            # image_level_ious = np.concatenate((image_level_ious, sample_ious))
+            # if max_clicks_per_image <= 0:
+            #     break
+
+        print(f"Processed file {sample.filename} with {len(sample.objects_ids)} instances.")
+        elapsed_per_image_time = time()-per_image_start_time
+        per_image_times.append(elapsed_per_image_time)
+        instance_count += len(sample.objects_ids)
+    end_time = time()
+    elapsed_time = end_time - start_time
+    
+    print(f"Avg time per image is {np.mean(np.array(per_image_times))}")
+    print(f"Average time per click {np.mean(avg_click_times_per_image)}")
+    return {'all_ious': all_ious,
+            'ious_per_image': all_ious_per_image,
+            'time': elapsed_time,
+            'instance_count': instance_count}
+
+
+def evaluate_dataset(dataset, predictor, vis = True, vis_path = './experiments/vis_val/',**kwargs):
+    all_ious = []
+    all_ious_per_image = []
+    avg_click_times_per_image = []
+    instance_count = 0
+    if vis:
+        save_dir =  vis_path + dataset.name + '/'
+        #save_dir = '/home/admin/workspace/project/data/logs/'+ dataset.name + '/'
+        if os.path.exists(save_dir):
+            shutil.rmtree(save_dir)
+        os.makedirs(save_dir)
+    else:
+        save_dir = None
+
+    start_time = time()
+    print(f"Number of images in dataset is {len(dataset)}")
+    for index in tqdm(range(len(dataset)), leave=False):
+    # for index in tqdm(range(3), leave=False):
+        image_level_ious = np.array([])
+        sample = dataset.get_sample(index)
+        # if len(sample._objects) > 0:
+        for obj_id in sample.objects_ids:
+            gt_mask = sample.get_object_mask(obj_id)
+            _, sample_ious, _, click_times = evaluate_sample(sample.image, gt_mask, sample.init_mask, predictor,
+                                                sample_id=index, vis=vis, save_dir=save_dir,
+                                                index=index, **kwargs)
+        # else:
+        #     _, sample_ious, _ = evaluate_sample(sample.image, sample.gt_mask, sample.init_mask, predictor,
+        #                                         sample_id=index, vis= vis, save_dir = save_dir,
+        #                                         index = index, **kwargs)
+            all_ious.append(sample_ious)
+            image_level_ious = np.concatenate((image_level_ious, sample_ious))
+            avg_click_times_per_image.append(np.mean(click_times))
+
+        all_ious_per_image.append(image_level_ious)
+        print(f"Processed file {sample.filename} with {len(sample.objects_ids)} instances.")
+        instance_count += len(sample.objects_ids)
     end_time = time()
     elapsed_time = end_time - start_time
 
-    return all_ious, elapsed_time
+    print(f"Average time per click {np.mean(avg_click_times_per_image)}")
+
+    return {'all_ious': all_ious,
+            # 'ious_per_image': all_ious_per_image,
+            'time': elapsed_time,
+            'instance_count': instance_count}
+
 
 def Progressive_Merge(pred_mask, previous_mask, y, x):
     diff_regions = np.logical_xor(previous_mask, pred_mask)
@@ -63,6 +162,7 @@ def evaluate_sample(image, gt_mask, init_mask, predictor, max_iou_thr,
     pred_mask = np.zeros_like(gt_mask)
     prev_mask = pred_mask
     ious_list = []
+    click_times = []
 
     with torch.no_grad():
         predictor.set_input_image(image)
@@ -77,6 +177,7 @@ def evaluate_sample(image, gt_mask, init_mask, predictor, max_iou_thr,
         for click_indx in range(max_clicks):
             vis_pred = prev_mask
             clicker.make_next_click(pred_mask)
+            time_per_click = time()
             pred_probs = predictor.get_prediction(clicker)
             pred_mask = pred_probs > pred_thr
 
@@ -90,6 +191,8 @@ def evaluate_sample(image, gt_mask, init_mask, predictor, max_iou_thr,
             if callback is not None:
                 callback(image, gt_mask, pred_probs, sample_id, click_indx, clicker.clicks_list)
 
+            elapsed_time_per_click = time() - time_per_click
+            click_times.append(elapsed_time_per_click)
             iou = utils.get_iou(gt_mask, pred_mask)
             ious_list.append(iou)
             prev_mask = pred_mask
@@ -115,10 +218,7 @@ def evaluate_sample(image, gt_mask, init_mask, predictor, max_iou_thr,
                 last_y, last_x = predictor.last_y, predictor.last_x
                 out_image = vis_result_base(image, pred_mask, gt_mask, init_mask, iou,click_indx+1,clicks_list, vis_pred, last_y, last_x)
                 cv2.imwrite(save_dir+str(index)+'.png', out_image)
-        return clicker.clicks_list, np.array(ious_list, dtype=np.float32), pred_probs
-
-
-
+        return clicker.clicks_list, np.array(ious_list, dtype=np.float32), pred_probs, np.array(click_times, dtype=np.float32)
 
 
 def vis_result_base(image, pred_mask, instances_mask, init_mask,  iou, num_clicks,  clicks_list, prev_prediction, last_y, last_x):

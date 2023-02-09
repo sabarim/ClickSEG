@@ -2,6 +2,7 @@ from isegm.data.compose import ComposeDataset, ProportionalComposeDataset
 from .berkeley import BerkeleyDataset
 from .coco import CocoDataset
 from .davis import DavisDataset
+from .davis import Davis2017Dataset
 from .grabcut import GrabCutDataset
 from .coco_lvis import CocoLvisDataset
 from .lvis import LvisDataset

@@ -3,17 +3,18 @@ EXPS_PATH: "./experiments"
 
 
 # Evaluation datasets
-GRABCUT_PATH: "/home/admin/workspace/project/data/datasets/GrabCut"
-BERKELEY_PATH: "/home/admin/workspace/project/data/datasets/Berkeley"
-DAVIS_PATH:  "/home/admin/workspace/project/data/datasets/DAVIS"
-COCO_MVAL_PATH: "/home/admin/workspace/project/data/datasets/COCO_MVal"
+GRABCUT_PATH: "./datasets/GrabCut"
+BERKELEY_PATH: "./datasets/Berkeley"
+DAVIS_PATH:  "./datasets/DAVIS"
+DAVIS17_PATH: "./datasets/davis/"
+COCO_MVAL_PATH: "./datasets/COCO_MVal"
 PASCALVOC_PATH: "/home/admin/workspace/project/data/datasets/VOC2012/VOCdevkit/VOC2012"
 DAVIS585_PATH: "/home/admin/workspace/project/data/datasets/InterDavis/Selected_480P"
 
 # Train datasets
-SBD_PATH:  "/home/admin/workspace/project/data/datasets/SBD/dataset"
-COCO_PATH: "/home/xizhi.cx/data/dataset/COCO"
-LVIS_PATH: "/home/admin/workspace/project/data/datasets/COCO_LVIS"
+SBD_PATH:  "./datasets/sbd/dataset"
+COCO_PATH: "./datasets/coco/"
+LVIS_PATH: "./datasets/LVIS/"
 LVIS_v1_PATH: "/home/admin/workspace/project/data/datasets/COCO_LVIS"
 OPENIMAGES_PATH: "/home/xizhi.cx/data/dataset/OpenImage"
 ADE20K_PATH: "/home/admin/workspace/project/data/datasets/ADE20K"
@@ -30,8 +31,8 @@ HFLICKER_PATH: "/home/admin/workspace/project/data/datasets/HFlickr"
 # You can download the weights for HRNet from the repository:
 # https://github.com/HRNet/HRNet-Image-Classification
 IMAGENET_PRETRAINED_MODELS:
-  HRNETV2_W18_SMALL: "/home/admin/workspace/project/data/weights/hrnet_w18_small_model_v2.pth"
-  HRNETV2_W32: "/home/admin/workspace/project/data/weights/hrnetv2_w32_imagenet_pretrained.pth"
+  HRNETV2_W18_SMALL: "./weights/hrnet_w18_small_model_v2.pth"
+  HRNETV2_W32: "./weights/hrnet32.pth"
   HRNETV2_W40: "./pretrained_models/hrnetv2_w40_imagenet_pretrained.pth"
   HRNETV2_W48: "./pretrained_models/hrnetv2_w48_imagenet_pretrained.pth"
   SEGFORMER_B0: "/home/admin/workspace/project/data/weights/Segformer/mit_b0.pth"

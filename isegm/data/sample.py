@@ -7,10 +7,11 @@ from albumentations import ReplayCompose
 class DSample:
     def __init__(self, image, encoded_masks, objects=None,
                  objects_ids=None, ignore_ids=None, sample_id=None,
-                 init_mask = None):
+                 init_mask = None, filename = None):
         self.image = image
         self.sample_id = sample_id
         self.init_mask = init_mask
+        self.filename = filename
 
         if len(encoded_masks.shape) == 2:
             encoded_masks = encoded_masks[:, :, np.newaxis]
@@ -18,7 +19,7 @@ class DSample:
         self._ignored_regions = []
 
         if objects_ids is not None:
-            if not objects_ids or not isinstance(objects_ids[0], tuple):
+            if len(objects_ids) == 0 or not isinstance(objects_ids[0], tuple):
                 assert encoded_masks.shape[2] == 1
                 objects_ids = [(0, obj_id) for obj_id in objects_ids]
 

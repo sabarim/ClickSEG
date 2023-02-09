@@ -1,9 +1,11 @@
+import json
 import sys
 import pickle
 import argparse
+import time
 from pathlib import Path
 
-import cv2
+# import cv2
 import torch
 import numpy as np
 
@@ -12,7 +14,7 @@ from isegm.inference import utils
 from isegm.utils.exp import load_config_file
 from isegm.utils.vis import draw_probmap, draw_with_blend_and_clicks
 from isegm.inference.predictors import get_predictor
-from isegm.inference.evaluation import evaluate_dataset
+from isegm.inference.evaluation import evaluate_dataset, evaluate_dataset_multi_instance
 
 
 def parse_args():
@@ -61,6 +63,7 @@ def parse_args():
     parser.add_argument('--clicks-limit', type=int, default=None)
     parser.add_argument('--eval-mode', type=str, default='cvpr',
                         help='Possible choices: cvpr, fixed<number> (e.g. fixed400, fixed600).')
+    parser.add_argument('--multi_instance', action='store_true', default=False, help="Enable multi instance evaluation strategy.")
 
     parser.add_argument('--save-ious', action='store_true', default=False)
     parser.add_argument('--print-ious', action='store_true', default=False)
@@ -131,13 +134,25 @@ def main():
                                       #zoom_in_params=None)
                                       zoom_in_params=zoomin_params)
 
+            start = time.time()
+            if args.multi_instance:
+              dataset_results = evaluate_dataset_multi_instance(dataset, predictor, pred_thr=args.thresh,
+                                                 max_iou_thr=args.target_iou,
+                                                 min_clicks=args.min_n_clicks,
+                                                 max_clicks=args.n_clicks,
+                                                 vis=args.vis,
+                                                 )
+            else:
             #vis_callback = get_prediction_vis_callback(logs_path, dataset_name, args.thresh) if args.vis else None
-            dataset_results = evaluate_dataset(dataset, predictor, pred_thr=args.thresh,
-                                               max_iou_thr=args.target_iou,
-                                               min_clicks=args.min_n_clicks,
-                                               max_clicks=args.n_clicks,
-                                               vis=args.vis,
-                                               )
+              dataset_results = evaluate_dataset(dataset, predictor, pred_thr=args.thresh,
+                                                 max_iou_thr=args.target_iou,
+                                                 min_clicks=args.min_n_clicks,
+                                                 max_clicks=args.n_clicks,
+                                                 vis=args.vis,
+                                                 )
+
+            end_time = time.time()
+            print(f"Total inference time {end_time - start}")
 
             row_name = args.mode if single_model_eval else checkpoint_path.stem
             if args.iou_analysis:
@@ -211,18 +226,53 @@ def get_checkpoints_list_and_logs_path(args, cfg):
 
 def save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_results,
                  save_ious=False, print_header=True, single_model_eval=False):
-    all_ious, elapsed_time = dataset_results
-    #print(all_ious)
-    mean_spc, mean_spi = utils.get_time_metrics(all_ious, elapsed_time)
-
+    # save the results for offline analysis
+    json.dump(dataset_results, open(logs_path / f'{args.eval_mode}_{args.mode}_{args.n_clicks}_raw.json', 'w+'),
+              indent=2)
+    all_ious = dataset_results['all_ious']
+    elapsed_time = dataset_results['time']
     iou_thrs = np.arange(0.8, min(0.95, args.target_iou) + 0.001, 0.05).tolist()
-    noc_list, over_max_list = utils.compute_noc_metric(all_ious, iou_thrs=iou_thrs, max_clicks=args.n_clicks)
-
+    instance_count = dataset_results['instance_count']
+    mean_spc, mean_spi = utils.get_time_metrics(all_ious, elapsed_time)
     row_name = 'last' if row_name == 'last_checkpoint' else row_name
     model_name = str(logs_path.relative_to(args.logs_path)) + ':' + logs_prefix if logs_prefix else logs_path.stem
+
+    if 'ious_per_image' in dataset_results:
+      ious_per_image = dataset_results['ious_per_image']
+      # assert isinstance(ious_per_image, dict)
+      noc_list, nof_objects_per_image, nof_images = utils.compute_nci_metric(ious_per_image, iou_thrs)
+      header_per_image, table_row_per_image = utils.get_nic_results_table(noc_list, nof_images, nof_objects_per_image, row_name, dataset_name,
+                                                      mean_spc, elapsed_time, model_name=model_name, instance_count=instance_count)
+
+      print("\n\n------------- Per Image Evaluation -------------\n\n")
+      if print_header:
+        print(header_per_image)
+      print(table_row_per_image)
+
+      log_path_per_image = logs_path / f'{args.eval_mode}_{args.mode}_{args.n_clicks}_per_image.txt'
+      if log_path_per_image.exists():
+        with open(log_path_per_image, 'a') as f:
+          f.write(table_row_per_image + '\n')
+      else:
+        with open(log_path_per_image, 'w') as f:
+          if print_header:
+            f.write(header_per_image + '\n')
+          f.write(table_row_per_image + '\n')
+
+    #print(all_ious)
+    # mean_spc_per_image, mean_spi_per_image = utils.get_time_metrics(ious_per_image, elapsed_time)
+    noc_list, over_max_list = utils.compute_noc_metric(all_ious, iou_thrs=iou_thrs, max_clicks=args.n_clicks)
+    # noc_list_per_image, over_max_list_per_image = utils.compute_noc_metric(ious_per_image,
+    #                                                                        iou_thrs=iou_thrs, max_clicks=args.n_clicks)
+
     header, table_row = utils.get_results_table(noc_list, over_max_list, row_name, dataset_name,
                                                 mean_spc, elapsed_time, args.n_clicks,
-                                                model_name=model_name)
+                                                model_name=model_name, instance_count=instance_count)
+
+    # header_per_image, table_row_per_image = utils.get_results_table(noc_list_per_image, over_max_list_per_image,
+    #                                                                 row_name, dataset_name, mean_spc_per_image,
+    #                                                                 elapsed_time, args.n_clicks, model_name=model_name,
+    #                                                                 instance_count=instance_count)
 
     if args.print_ious:
         min_num_clicks = min(len(x) for x in all_ious)
@@ -258,6 +308,7 @@ def save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_r
     if log_path.exists():
         with open(log_path, 'a') as f:
             f.write(table_row + '\n')
+            # f.write(table_row_per_image + '\n')
     else:
         with open(log_path, 'w') as f:
             if print_header:
@@ -266,7 +317,7 @@ def save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_r
 
 
 def save_iou_analysis_data(args, dataset_name, logs_path, logs_prefix, dataset_results, model_name=None):
-    all_ious, _ = dataset_results
+    all_ious, _, _ = dataset_results
 
     name_prefix = ''
     if logs_prefix:

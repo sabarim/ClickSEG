@@ -121,12 +121,15 @@ class FocalPredictor(object):
         self.focus_roi = focus_roi
         focus_roi_in_global_roi = self.mapp_roi(focus_roi, global_roi)
         focus_pred = self._get_refine(pred_logits,image_full,clicks_list, feature, focus_roi, focus_roi_in_global_roi)#.cpu().numpy()[0, 0]
-        focus_pred = F.interpolate(focus_pred,(y2-y1,x2-x1),mode='bilinear',align_corners=True)#.cpu().numpy()[0, 0]
+        if y2 > y1 and x2 > x1:
+            focus_pred = F.interpolate(focus_pred,(y2-y1,x2-x1),mode='bilinear',align_corners=True)#.cpu().numpy()[0, 0]
         
-        if len(clicks_list) > 10:
+            if len(clicks_list) > 10:
+                coarse_mask = self.prev_prediction
+                coarse_mask  = torch.log( coarse_mask/(1-coarse_mask)  )
+            coarse_mask[:,:,y1:y2,x1:x2] =  focus_pred
+        else:
             coarse_mask = self.prev_prediction
-            coarse_mask  = torch.log( coarse_mask/(1-coarse_mask)  )
-        coarse_mask[:,:,y1:y2,x1:x2] =  focus_pred
         coarse_mask = torch.sigmoid(coarse_mask)
         
         self.prev_prediction = coarse_mask
@@ -141,6 +144,8 @@ class FocalPredictor(object):
     def _get_refine(self, coarse_mask, image, clicks, feature, focus_roi, focus_roi_in_global_roi):
         y1,y2,x1,x2 = focus_roi
         image_focus = image[:,:,y1:y2,x1:x2]
+        if image_focus.shape[-2] == 0 or image_focus.shape[-1] == 0:
+            return F.interpolate(image,(self.crop_l,self.crop_l),mode='bilinear',align_corners=True)
         image_focus = F.interpolate(image_focus,(self.crop_l,self.crop_l),mode='bilinear',align_corners=True)
         mask_focus = coarse_mask
         points_nd = self.get_points_nd_inbbox(clicks,y1,y2,x1,x2)

@@ -1,6 +1,6 @@
 matplotlib==3.3.4
 easydict==1.9
-opencv_contrib_python==4.2.0.32
+opencv_contrib_python
 torchvision==0.9.0a0+01dfa8e
 mmcv_full==1.2.7
 numpy==1.17.0

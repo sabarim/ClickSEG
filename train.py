@@ -19,7 +19,7 @@ def main():
     cfg = init_experiment(args, model_base_name)
 
     torch.backends.cudnn.benchmark = True
-    torch.multiprocessing.set_sharing_strategy('file_system')
+    #torch.multiprocessing.set_sharing_strategy('file_system')
 
     model_script.main(cfg)
 

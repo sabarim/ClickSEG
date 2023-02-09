@@ -1,4 +1,6 @@
 import torch
+from torchvision.models import resnet50, ResNet50_Weights
+
 from .resnetv1b import resnet18_v1b, resnet34_v1b, resnet50_v1s, resnet101_v1s, resnet152_v1s
 
 
@@ -11,7 +13,7 @@ class ResNetBackbone(torch.nn.Module):
         elif backbone == 'resnet34':
             pretrained = resnet34_v1b(pretrained=pretrained_base, dilated=dilated, **kwargs)
         elif backbone == 'resnet50':
-            pretrained = resnet50_v1s(pretrained=pretrained_base, dilated=dilated, **kwargs)
+            pretrained = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
         elif backbone == 'resnet101':
             pretrained = resnet101_v1s(pretrained=pretrained_base, dilated=dilated, **kwargs)
         elif backbone == 'resnet152':
