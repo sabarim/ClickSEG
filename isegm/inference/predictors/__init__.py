@@ -62,9 +62,6 @@ def get_predictor(net, brs_mode, device,
             predictor_params_.update(predictor_params)
         predictor = BaselinePredictor(net, device, zoom_in=zoom_in, with_flip=with_flip, infer_size =infer_size, **predictor_params_)
 
-
-    
-    
     elif brs_mode.startswith('f-BRS'):
         predictor_params_.update({
             'net_clicks_limit': 8,

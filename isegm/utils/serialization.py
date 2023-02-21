@@ -54,7 +54,7 @@ def load_model(config, **kwargs):
         if pname not in model_default_params and not param['specified']:
             continue
 
-        assert pname in model_default_params
+        # assert pname in model_default_params
         if not param['specified'] and model_default_params[pname].default == value:
             continue
         model_args[pname] = value

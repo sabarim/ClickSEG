@@ -11,7 +11,7 @@ class ISModel(nn.Module):
                  norm_radius=260, use_disks=False, cpu_dist_maps=False,
                  clicks_groups=None, with_prev_mask=False, use_leaky_relu=False,
                  binary_prev_mask=False, conv_extend=False, norm_layer=nn.BatchNorm2d,
-                 norm_mean_std=([.485, .456, .406], [.229, .224, .225])):
+                 norm_mean_std=([.485, .456, .406], [.229, .224, .225]), **kwargs):
         super().__init__()
         self.with_aux_output = with_aux_output
         self.clicks_groups = clicks_groups

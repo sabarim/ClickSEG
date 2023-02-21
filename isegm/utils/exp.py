@@ -26,6 +26,7 @@ def init_experiment(args, model_name):
 
     cfg.distributed = args.distributed
     cfg.local_rank = args.local_rank
+    cfg.fuse = args.fuse
     if cfg.distributed:
         torch.distributed.init_process_group(backend='nccl', init_method='env://')
         if args.workers > 0:

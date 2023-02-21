@@ -66,6 +66,7 @@ def parse_args():
                         help='Do not use this argument (for internal purposes).')
 
     parser.add_argument("--local_rank", type=int, default=0)
+    parser.add_argument("--fuse", action='store_true')
 
     return parser.parse_args()
 

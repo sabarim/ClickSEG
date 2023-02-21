@@ -49,7 +49,7 @@ def evaluate_dataset_multi_instance(dataset, predictor, vis = True, vis_path = '
     per_image_times = []
     # print_data_stats(dataset)
     for index in tqdm(range(len(dataset)), leave=False):
-    # for index in tqdm(range(3), leave=False):
+    #for index in tqdm(range(3), leave=False):
         per_image_start_time = time()
         sample = dataset.get_sample(index)
         max_clicks_per_image = len(sample.objects_ids) * max_clicks_per_objects

@@ -15,7 +15,7 @@ DAVIS585_PATH: "/home/admin/workspace/project/data/datasets/InterDavis/Selected_
 SBD_PATH:  "./datasets/sbd/dataset"
 COCO_PATH: "./datasets/coco/"
 LVIS_PATH: "./datasets/LVIS/"
-LVIS_v1_PATH: "/home/admin/workspace/project/data/datasets/COCO_LVIS"
+LVIS_v1_PATH: "./datasets/coco_lvis"
 OPENIMAGES_PATH: "/home/xizhi.cx/data/dataset/OpenImage"
 ADE20K_PATH: "/home/admin/workspace/project/data/datasets/ADE20K"
 

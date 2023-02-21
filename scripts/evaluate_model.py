@@ -226,9 +226,6 @@ def get_checkpoints_list_and_logs_path(args, cfg):
 
 def save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_results,
                  save_ious=False, print_header=True, single_model_eval=False):
-    # save the results for offline analysis
-    json.dump(dataset_results, open(logs_path / f'{args.eval_mode}_{args.mode}_{args.n_clicks}_raw.json', 'w+'),
-              indent=2)
     all_ious = dataset_results['all_ious']
     elapsed_time = dataset_results['time']
     iou_thrs = np.arange(0.8, min(0.95, args.target_iou) + 0.001, 0.05).tolist()
@@ -238,6 +235,8 @@ def save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_r
     model_name = str(logs_path.relative_to(args.logs_path)) + ':' + logs_prefix if logs_prefix else logs_path.stem
 
     if 'ious_per_image' in dataset_results:
+      json.dump(dataset_results, open(logs_path / f'{dataset_name}_{args.eval_mode}_{args.mode}_{args.n_clicks}_raw.json', 'w+'),
+                indent=2)
       ious_per_image = dataset_results['ious_per_image']
       # assert isinstance(ious_per_image, dict)
       noc_list, nof_objects_per_image, nof_images = utils.compute_nci_metric(ious_per_image, iou_thrs)

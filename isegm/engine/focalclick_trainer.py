@@ -313,9 +313,10 @@ class ISTrainer(object):
             
             loss = self.add_loss('instance_click_loss', loss, losses_logging, validation,
                                  lambda: (output['instances'], batch_data['instances'], output['click_map']))
-                                 
-            loss = self.add_loss('instance_aux_loss', loss, losses_logging, validation,
-                                 lambda: (output['instances_aux'], batch_data['instances']))
+
+            if output['instances_aux'] is not None:
+                loss = self.add_loss('instance_aux_loss', loss, losses_logging, validation,
+                                     lambda: (output['instances_aux'], batch_data['instances']))
 
             loss = self.add_loss('trimap_loss', loss, losses_logging, validation,
                                  lambda: (refine_output['trimap'], batch_data['trimap_focus']))
