@@ -67,6 +67,7 @@ def parse_args():
 
     parser.add_argument("--local_rank", type=int, default=0)
     parser.add_argument("--fuse", action='store_true')
+    parser.add_argument("--fpn", default='fpn', type=str)
 
     return parser.parse_args()
 

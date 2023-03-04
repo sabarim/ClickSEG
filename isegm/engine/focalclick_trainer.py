@@ -180,7 +180,7 @@ class ISTrainer(object):
                     self.save_visualization(splitted_batch_data, outputs,refine_output, global_step, prefix='train')
 
                 self.sw.add_scalar(tag=f'{log_prefix}States/learning_rate',
-                                   value=self.lr if not hasattr(self, 'lr_scheduler') else self.lr_scheduler.get_lr()[-1],
+                                   value=self.lr if not hasattr(self, 'lr_scheduler') else self.lr_scheduler.get_last_lr()[-1],
                                    global_step=global_step)
 
                 tbar.set_description(f'Epoch {epoch}, training loss {train_loss/(i+1):.4f}')

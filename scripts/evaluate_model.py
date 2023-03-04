@@ -233,15 +233,20 @@ def save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_r
     mean_spc, mean_spi = utils.get_time_metrics(all_ious, elapsed_time)
     row_name = 'last' if row_name == 'last_checkpoint' else row_name
     model_name = str(logs_path.relative_to(args.logs_path)) + ':' + logs_prefix if logs_prefix else logs_path.stem
+    # per_click_iou = utils.get_per_click_iou(dataset_results['all_ious'])
 
     if 'ious_per_image' in dataset_results:
-      json.dump(dataset_results, open(logs_path / f'{dataset_name}_{args.eval_mode}_{args.mode}_{args.n_clicks}_raw.json', 'w+'),
+      json.dump(dataset_results, open(logs_path / f'{dataset_name}_{args.eval_mode}_{args.mode}_{args.n_clicks}_multi_instance_raw.json', 'w+'),
                 indent=2)
       ious_per_image = dataset_results['ious_per_image']
+      ious_fused = [val for ious_per_image in dataset_results['fused_ious'] for val in ious_per_image]
       # assert isinstance(ious_per_image, dict)
-      noc_list, nof_objects_per_image, nof_images = utils.compute_nci_metric(ious_per_image, iou_thrs)
-      header_per_image, table_row_per_image = utils.get_nic_results_table(noc_list, nof_images, nof_objects_per_image, row_name, dataset_name,
-                                                      mean_spc, elapsed_time, model_name=model_name, instance_count=instance_count)
+      noc_list, nof_objects_per_image, nof_images, nfo_fused = utils.compute_nci_metric(ious_per_image, iou_thrs)
+      header_per_image, table_row_per_image = utils.get_nic_results_table(noc_list, nof_images, nof_objects_per_image,
+                                                                          row_name, dataset_name, mean_spc, elapsed_time,
+                                                                          model_name=model_name,
+                                                                          instance_count=instance_count,
+                                                                          nfo_fused = nfo_fused)
 
       print("\n\n------------- Per Image Evaluation -------------\n\n")
       if print_header:
@@ -257,8 +262,12 @@ def save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_r
           if print_header:
             f.write(header_per_image + '\n')
           f.write(table_row_per_image + '\n')
+    else:
+        dataset_results['per_click_iou'] = per_click_iou
+        json.dump(dataset_results, open(
+            logs_path / f'{dataset_name}_{args.eval_mode}_{args.mode}_{args.n_clicks}_single_instance_raw.json', 'w+'),
+                  indent=2)
 
-    #print(all_ious)
     # mean_spc_per_image, mean_spi_per_image = utils.get_time_metrics(ious_per_image, elapsed_time)
     noc_list, over_max_list = utils.compute_noc_metric(all_ious, iou_thrs=iou_thrs, max_clicks=args.n_clicks)
     # noc_list_per_image, over_max_list_per_image = utils.compute_noc_metric(ious_per_image,

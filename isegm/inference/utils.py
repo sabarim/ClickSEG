@@ -98,6 +98,27 @@ def get_iou(gt_mask, pred_mask, ignore_label=-1):
     return intersection / union
 
 
+def get_fused_iou(pred_mask, gt_mask):
+    ids = np.unique(pred_mask)
+    ids = ids[ids!=0]
+    res_ious = []
+    for _id in ids:
+        res_ious.append(get_iou(pred_mask == _id, gt_mask == _id))
+    return res_ious
+
+
+def get_per_click_iou(all_ious, n_clicks=20):
+    # pad the ious with the last value to have a constant length
+    ious = np.stack(
+        [
+            np.pad(_ious_per_object, (0, n_clicks-len(_ious_per_object)), constant_values=_ious_per_object[-1])
+            for _ious_per_object in all_ious
+        ])
+    ious_per_click = np.mean(ious, axis=0)
+
+    return dict([(_i+1, val) for _i, val in enumerate(ious_per_click)])
+
+
 def compute_noc_metric(all_ious, iou_thrs, max_clicks=20):
     def _get_noc(iou_arr, iou_thr):
         vals = np.array(iou_arr) >= iou_thr
@@ -127,9 +148,11 @@ def compute_nci_metric(result_per_image, iou_thrs):
     nci_list = np.ones((len(result_per_image), len(iou_thrs))) * -1
     nof_objects = []
     nof_images = []
+    nfo_fused = []
     for _i, _result_dict in enumerate(result_per_image):
         nof_objects_per_thresh = []
         nof_images_per_thresh = []
+        nfo_fused_per_thresh = []
         for _j, iou_thr in enumerate(iou_thrs):
             num_instances = _result_dict['num_instances']
             max_clicks = _result_dict['max_clicks']
@@ -146,9 +169,17 @@ def compute_nci_metric(result_per_image, iou_thrs):
             # failed_objects = over_max + (num_instances - len(ious))
             nof_objects_per_thresh.append(num_failed_objects)
             nof_images_per_thresh.append(int(num_failed_objects > 0))
+            if _j == len(iou_thrs) - 1:
+                nfo_fused_per_thresh.append(
+                    (np.array(_result_dict['fused_ious_per_image'][:num_success]) < iou_thrs[-1]).sum()
+                )
+            else:
+                nfo_fused_per_thresh.append(0)
         nof_objects.append(np.array(nof_objects_per_thresh))
         nof_images.append(np.array(nof_images_per_thresh))
-    return nci_list.mean(axis=0), np.stack(nof_objects).sum(axis=0), np.stack(nof_images).sum(axis=0)
+        nfo_fused.append(np.array(nfo_fused_per_thresh))
+    return nci_list.mean(axis=0), np.stack(nof_objects).sum(axis=0), \
+        np.stack(nof_images).sum(axis=0), np.stack(nfo_fused).sum(axis=0)
 
 
 def find_checkpoint(weights_folder, checkpoint_name):
@@ -199,9 +230,10 @@ def get_results_table(noc_list, over_max_list, brs_type, dataset_name, mean_spc,
 
 
 def get_nic_results_table(nci_list, nof_images, nof_objects, brs_type, dataset_name, mean_spc, elapsed_time,
-                          model_name=None, instance_count=None):
+                          model_name=None, instance_count=None, nfo_fused=None):
     table_header = (f'|{"Pipeline":^13}|{"Dataset":^11}|{"#Instances":^9}|'
-                    f'{"NCI@80%":^9}|{"NCI@85%":^9}|{"NCI@90%":^9}| {"NOF Images@85%":^9} | {"NOF Objects@85%":^9}'
+                    f'{"NCI@80%":^9}|{"NCI@85%":^9}|{"NCI@90%":^9}| '
+                    f'{"NFI@85%":^9} | {"NFO@85%":^9} | {"NFO Fused@85%":^9}|'
                     f'{"SPC,s":^7}|{"Time":^9}|')
     row_width = len(table_header)
 
@@ -215,7 +247,8 @@ def get_nic_results_table(nci_list, nof_images, nof_objects, brs_type, dataset_n
     table_row += f'{nci_list[1]:^9.2f}|' if len(nci_list) > 1 else f'{"?":^9}|'
     table_row += f'{nci_list[2]:^9.2f}|' if len(nci_list) > 2 else f'{"?":^9}|'
     table_row += f'{nof_images[1]:^9}|' if len(nof_images) > 1 else f'{"?":^9}|'
-    table_row += f'{nof_objects[1]:^9}|' if len(nof_objects) > 2 else f'{"?":^9}|'
+    table_row += f'{nof_objects[1]:^9}|' if len(nof_objects) > 1 else f'{"?":^9}|'
+    table_row += f'{nfo_fused[1]:^9}|' if len(nfo_fused) > 1 else f'{"?":^9}|'
     table_row += f'{mean_spc:^7.3f}|{eval_time:^9}|'
 
     return header, table_row

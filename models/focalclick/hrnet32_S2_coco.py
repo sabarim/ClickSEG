@@ -1,11 +1,10 @@
 from isegm.data.datasets.coco import CocoValDataset
-from isegm.model.is_resnet_model import Resnet50Model
 from isegm.utils.exp_imports.default import *
-MODEL_NAME = 'resnet50_cclvis_pixel_decoder'
+MODEL_NAME = 'hrnet32_S2_coco'
+from isegm.data.compose import ComposeDataset,ProportionalComposeDataset
 import torch.nn as nn
 from isegm.data.aligned_augmentation import AlignedAugmentator
 from isegm.engine.focalclick_trainer import ISTrainer
-
 
 def main(cfg):
     model, model_cfg = init_model(cfg)
@@ -16,15 +15,13 @@ def init_model(cfg):
     model_cfg = edict()
     model_cfg.crop_size = (256, 256)
     model_cfg.num_max_points = 24
-    model = Resnet50Model(with_aux_output=False,
-                          use_leaky_relu=True, use_rgb_conv=False, use_disks=True, norm_radius=5,
-                          with_prev_mask=True,
-                          fuse=cfg['fuse'],
-                          fpn=cfg['fpn'])
+    model = HRNetModel(pipeline_version = 's2', width=32, ocr_width=128, small=False, with_aux_output=True, use_leaky_relu=True,
+                       use_rgb_conv=False, use_disks=True, norm_radius=5,
+                       with_prev_mask=True)
 
     model.to(cfg.device)
-    # model.apply(initializer.XavierGluon(rnd_type='gaussian', magnitude=2.0))
-    # model.feature_extractor.load_pretrained_weights(cfg.IMAGENET_PRETRAINED_MODELS.HRNETV2_W18_SMALL)
+    model.apply(initializer.XavierGluon(rnd_type='gaussian', magnitude=2.0))
+    model.feature_extractor.load_pretrained_weights(cfg.IMAGENET_PRETRAINED_MODELS.HRNETV2_W32)
     #model.load_pretrained_weights('/home/admin/workspace/project/data/weights/ritm/coco_lvis_h18s_itermask.pth')
     return model, model_cfg
 
@@ -44,7 +41,14 @@ def train(model, cfg, model_cfg):
     loss_cfg.trimap_loss = nn.BCEWithLogitsLoss() #NormalizedFocalLossSigmoid(alpha=0.5, gamma=2)
     loss_cfg.trimap_loss_weight = 1.0
 
-    train_augmentator = AlignedAugmentator(ratio=[0.3,1.3], target_size=crop_size,flip=True, distribution='Gaussian')
+    color_augmentator = Compose([
+        RandomBrightnessContrast(brightness_limit=(-0.25, 0.25), contrast_limit=(-0.15, 0.4), p=0.75),
+        RGBShift(r_shift_limit=10, g_shift_limit=10, b_shift_limit=10, p=0.75)
+    ], p=1.0)
+
+    train_augmentator = AlignedAugmentator(ratio=[0.3,1.3], target_size=crop_size, flip=True, 
+                                            distribution='Gaussian', gs_center = 0.8, gs_sd = 0.4,
+                                            color_augmentator = color_augmentator)
 
     val_augmentator = Compose([
         UniformRandomResize(scale_range=(0.75, 1.25)),
@@ -58,9 +62,9 @@ def train(model, cfg, model_cfg):
                                        use_hierarchy=False,
                                        first_click_center=True)
 
-    trainset_cclvs = CocoLvisDataset(
-        cfg.LVIS_v1_PATH,
-        split='train',
+    trainset_cclvs = CocoDataset(
+        cfg.COCO_PATH,
+        split='train2017',
         augmentator=train_augmentator,
         min_object_area=1000,
         keep_background_prob=0.05,
@@ -69,16 +73,14 @@ def train(model, cfg, model_cfg):
         stuff_prob=0.20
     )
 
-    valset = CocoLvisDataset(
-        cfg.LVIS_v1_PATH,
-        split='val',
+    valset = CocoValDataset(
+        cfg.COCO_PATH,
+        split='val2017',
         augmentator=val_augmentator,
         min_object_area=1000,
         points_sampler=points_sampler,
         epoch_len=2000
     )
-
-    optim = 'adamw' if cfg['fpn'] == 'pixel_decoder' else 'adam'
 
     optimizer_params = {
         'lr': 5e-4, 'betas': (0.9, 0.999), 'eps': 1e-8
