@@ -74,21 +74,8 @@ class COCOMValMultiDataset(ISDataset):
         self.annotation_file = os.path.join(self.coco_path, 'annotations', 'instances_val2017.json')
         # self.labels_path = self.coco_path / 'annotations' / f'panoptic_{self.split}'
         # self.images_path = self.coco_path / self.split
-        self.min_area = 1000
+        self.min_area = 0
         self.init_coco()
-
-        # with open(self.annotation_file, 'r') as f:
-        #     annotation = json.load(f)
-        #
-        # self.dataset_samples = self.create_sample_list()
-        #
-        # self._categories = annotation['categories']
-        # # self._stuff_labels = [x['id'] for x in self._categories if x['isthing'] == 0]
-        # self._stuff_labels = []
-        # # self._things_labels = [x['id'] for x in self._categories if x['isthing'] == 1]
-        # self._things_labels = [x['id']-1 for x in self._categories]
-        # self._things_labels_set = set(self._things_labels)
-        # self._stuff_labels_set = set(self._stuff_labels)
 
     def init_coco(self):
         # only import this dependency on demand
@@ -113,31 +100,14 @@ class COCOMValMultiDataset(ISDataset):
         self.filter_anns()
 
     def filter_anns(self):
-        # exclude all images which contain a crowd
-        # if self.filter_crowd_images:
-        #     self.filename_to_anns = {f: anns for f, anns in self.filename_to_anns.items()
-        #                              if not any([an["iscrowd"] for an in anns])}
         # filter annotations with too small boxes
         if self.min_area != -1.0:
             self.filename_to_anns = {f: [ann for ann in anns if ann["area"] >= self.min_area] for f, anns in
                                      self.filename_to_anns.items()}
 
         # remove annotations with crowd regions
-        self.filename_to_anns = {f: [ann for ann in anns if not ann["iscrowd"] and not ann['category_id'] > 80]
+        self.filename_to_anns = {f: [ann for ann in anns if not ann["iscrowd"]]
                                  for f, anns in self.filename_to_anns.items()}
-        # restrict images to contain considered categories
-        # if self.restricted_image_category_list is not None and len(self.restricted_image_category_list) > 0:
-        #     print("filtering images to contain categories", self.restricted_image_category_list)
-        #     self.filename_to_anns = {f: [ann for ann in anns if self.label_map[ann["category_id"] - 1][
-        #         "name"] in self.restricted_image_category_list]
-        #                              for f, anns in self.filename_to_anns.items()
-        #                              if any([self.label_map[ann["category_id"] - 1]["name"]
-        #                                      in self.restricted_image_category_list for ann in anns])}
-        #     for cat in self.restricted_image_category_list:
-        #         n_imgs_for_cat = sum([1 for anns in self.filename_to_anns.values() if
-        #                               any([self.label_map[ann["category_id"] - 1]["name"] == cat for ann in anns])])
-        #         print("number of images containing", cat, ":", n_imgs_for_cat)
-
         # filter out images without annotations
         self.filename_to_anns = {f: anns for f, anns in self.filename_to_anns.items() if len(anns) > 0}
         n_before = len(self.anns)
