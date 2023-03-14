@@ -1,14 +1,13 @@
 from datetime import timedelta
 from pathlib import Path
 
-import torch
 import numpy as np
+import torch
 
 from isegm.data.datasets import GrabCutDataset, BerkeleyDataset, DavisDataset, SBDEvaluationDataset, PascalVocDataset, \
     Davis585Dataset, COCOMValDataset, CocoDataset, Davis2017Dataset, SBDDataset
 from isegm.data.datasets.coco import CocoValDataset
 from isegm.data.datasets.cocomval import COCOMValMultiDataset
-
 from isegm.utils.serialization import load_model
 
 
@@ -99,7 +98,7 @@ def get_iou(gt_mask, pred_mask, ignore_label=-1):
 
 
 def get_fused_iou(pred_mask, gt_mask):
-    ids = np.unique(pred_mask)
+    ids = np.arange(gt_mask.max() + 1)
     ids = ids[ids!=0]
     res_ious = []
     for _id in ids:

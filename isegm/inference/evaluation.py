@@ -1,19 +1,15 @@
+import os
+import shutil
 from time import time
 
+import cv2
 import numpy as np
 import torch
-import os
-
 from pycocotools import mask
 
-from isegm.data.sample import DSample
 from isegm.inference import utils
 from isegm.inference.clicker import Clicker
-import shutil
-import cv2
 from isegm.utils.vis import add_tag
-
-
 
 try:
     get_ipython()
@@ -59,7 +55,8 @@ def evaluate_dataset_multi_instance(dataset, predictor, vis = True, vis_path = '
         all_ious_per_image.append(
             {'ious': [], 'num_instances': len(sample.objects_ids),
              'max_clicks': max_clicks_per_image, 'filename': sample.filename,
-             'pred_masks_per_object': [], 'gt_mask_per_object': []}
+             'pred_masks_per_object': [], 'gt_mask_per_object': [],
+             'final_pred_per_object': []}
         )
         # if len(sample._objects) > 0:
         clicks_per_image.append(max_clicks_per_image)
@@ -104,6 +101,8 @@ def evaluate_dataset_multi_instance(dataset, predictor, vis = True, vis_path = '
 
             final_pred_rle = mask.encode(np.asfortranarray(pred_probs > kwargs['pred_thr']))
             final_pred_rle['counts'] = str(final_pred_rle['counts'], encoding='utf-8')
+            all_ious_per_image[-1]['final_pred_per_object'].append(final_pred_rle)
+
             avg_click_times_per_image.append(np.mean(click_times))
             # image_level_ious = np.concatenate((image_level_ious, sample_ious))
             # if max_clicks_per_image <= 0:
@@ -151,7 +150,7 @@ def evaluate_dataset(dataset, predictor, vis = True, vis_path = './experiments/v
         image_level_ious = np.array([])
         sample = dataset.get_sample(index)
         # if len(sample._objects) > 0:
-        for _i, obj_id in (sample.objects_ids):
+        for _i, obj_id in enumerate(sample.objects_ids):
             gt_mask = sample.get_object_mask(obj_id)
             _, sample_ious, pred_probs, click_times, pred_masks_per_thresh = \
                 evaluate_sample(sample.image, gt_mask, sample.init_mask, predictor,

@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import time
+from copy import deepcopy
 
 import numpy as np
 from pycocotools import mask
@@ -52,7 +53,27 @@ def get_results_table(nci, nfo, nfi, nfo_extra, nfi_extra, iou, eval_type, model
     return header, table_row
 
 
-def get_fused_iou(_result_dict, iou_thr, obj_ids):
+def get_obj_id(running_ious, pool, thresh, strategy="best"):
+    """
+    :running_ious - the updated iou buffer
+    :pool - the available iou pool
+    :thresh - iou threshold
+    :strategy - one of [best, worst, random]
+    """
+    if strategy == "random":
+        obj_ids_ordered = np.random.permutation(np.arange(len(pool)))
+    else:
+        obj_ids_ordered = np.argsort([_miou[0] if len(_miou) > 0 else 1 for _miou in pool]) \
+            if strategy =="worst" else np.argsort([_miou[0] if len(_miou) > 0 else 1 for _miou in pool])[::-1]
+
+    for _id in obj_ids_ordered:
+        if len(pool[_id]) > 0 and running_ious[_id][-1] < thresh:
+                return _id
+
+    return None
+
+
+def get_fused_iou(_result_dict, nocs, iou_thr):
     #     fuse masks
     pred_masks = None
     gt_mask = None
@@ -80,7 +101,7 @@ def compute_nci_metric(result_per_image, iou_thrs, object_ordering='random', n_c
     def _get_noc(iou_arr, iou_thr, max_clicks_per_image):
         vals = np.array(iou_arr) >= iou_thr
         noc = np.argmax(vals) + 1 if np.any(vals) else max_clicks_per_image
-        iou_at_noc = np.array(iou_arr)[vals][0] if np.any(vals) else iou_arr[noc-1]
+        iou_at_noc = np.array(iou_arr)[vals][0] if np.any(vals) else iou_arr[noc - 1]
         return noc, iou_at_noc
 
     nci_list = np.ones((len(result_per_image), len(iou_thrs))) * -1
@@ -98,28 +119,35 @@ def compute_nci_metric(result_per_image, iou_thrs, object_ordering='random', n_c
         nfi_extra_per_thresh = []
         for _j, iou_thr in enumerate(iou_thrs):
             num_instances = _result_dict['num_instances']
-            total_instance_count+=num_instances
+            total_instance_count += num_instances
             max_clicks = _result_dict['max_clicks']
-            assert max_clicks == num_instances*n_clicks_per_object
-            ious = _result_dict['ious']
-            obj_ids = np.random.permutation(np.arange(0, num_instances))
+            assert max_clicks == num_instances * n_clicks_per_object
 
-            scores_arr = np.array([_get_noc(ious[_id], iou_thr, max_clicks)
-                                   for _id in obj_ids], dtype=np.float)
-            noc = scores_arr[:, 0].astype(int)
-            iou_at_noc = scores_arr[:, 1]
-            if object_ordering == 'best':
-                iou_at_noc = iou_at_noc[np.argsort(noc)]
-                obj_ids = obj_ids[np.argsort(noc)]
-                noc = np.sort(noc)
-            cum_scores = np.cumsum(noc)
-            num_failed_objects = (cum_scores >= max_clicks).sum()
-            num_success = (cum_scores < max_clicks)
-            nci = noc[num_success].mean() if num_success.sum() > 0 else max_clicks / num_instances
-            avg_iou_per_image = np.concatenate(
-                [iou_at_noc[num_success],
-                 np.zeros(num_failed_objects)]
-            ).mean()
+            iou_pool = deepcopy(_result_dict['ious'])
+            # add the first click ious
+            multi_instance_ious = [[_ious.pop(0)] for _ious in iou_pool]
+            for _click in range(max_clicks-num_instances):
+                if sum([len(_ious) for _ious in iou_pool]) == 0 or np.all([_ious[-1] > iou_thr for _ious in multi_instance_ious]):
+                    break
+                selected_obj_id = get_obj_id(multi_instance_ious, iou_pool, iou_thr, strategy=object_ordering)
+                assert selected_obj_id is not None
+                multi_instance_ious[selected_obj_id].append(
+                    iou_pool[selected_obj_id].pop(0)
+                )
+
+            nocs = [len(_ious) for _ious in multi_instance_ious]
+            iou_at_noc = [_ious[-1] for _ious in multi_instance_ious]
+            cum_scores = np.cumsum(nocs)
+            # all clicks should be used if there's atleast one failed onject
+            assert cum_scores[-1] == max_clicks or np.all([_ious[-1] > iou_thr for _ious in multi_instance_ious])
+
+            failed_object_mask = [_ious[-1] < iou_thr for _ious in multi_instance_ious]
+            success_mask = np.logical_not(failed_object_mask)
+            num_failed_objects = sum(failed_object_mask)
+
+            nci = np.array(nocs)[success_mask].mean() if success_mask.sum() > 0 else max_clicks / num_instances
+
+            avg_iou_per_image = np.mean(iou_at_noc)
 
             nci_list[_i, _j] = nci
             # failed_objects = over_max + (num_instances - len(ious))
@@ -127,11 +155,13 @@ def compute_nci_metric(result_per_image, iou_thrs, object_ordering='random', n_c
             nof_images_per_thresh.append(int(num_failed_objects > 0))
             avg_iou_per_thresh.append(avg_iou_per_image)
 
-            fused_iou = get_fused_iou(_result_dict, iou_thr, obj_ids)
-            extra_failed_objects = (np.array(fused_iou)[num_success] < iou_thrs).sum()
-            nfo_extra_per_thresh.append(extra_failed_objects)
-            nfi_extra_per_thresh.append(int(extra_failed_objects > 0 and num_failed_objects == 0))
-            
+            # fused_iou = get_fused_iou(_result_dict, nocs, iou_thr)
+            # extra_failed_objects = (np.array(fused_iou)[success_mask] < iou_thrs).sum()
+            # nfo_extra_per_thresh.append(extra_failed_objects)
+            # nfi_extra_per_thresh.append(int(extra_failed_objects > 0 and num_failed_objects == 0))
+            nfo_extra_per_thresh.append(0)
+            nfi_extra_per_thresh.append(0)
+
         nof_objects.append(np.array(nof_objects_per_thresh))
         nof_images.append(np.array(nof_images_per_thresh))
         avg_iou.append(avg_iou_per_thresh)
@@ -143,93 +173,33 @@ def compute_nci_metric(result_per_image, iou_thrs, object_ordering='random', n_c
         [np.mean(avg_iou)], [total_instance_count]
 
 
-def nci_per_object_limit(result_per_image, iou_thrs, n_clicks_per_object):
-    def _get_noc(iou_arr, iou_thr, max_clicks_per_image):
-        vals = np.array(iou_arr) >= iou_thr
-        noc = np.argmax(vals) + 1 if np.any(vals) else max_clicks_per_image
-        iou_at_noc = np.array(iou_arr)[vals][0] if np.any(vals) else 0.
-        return noc, iou_at_noc
-
-    nci_list = np.ones((len(result_per_image), len(iou_thrs))) * -1
-    nof_objects = []
-    nof_images = []
-    avg_iou = []
-    total_instance_count = 0
-    for _i, _result_dict in enumerate(result_per_image):
-        nof_objects_per_thresh = []
-        nof_images_per_thresh = []
-        avg_iou_per_thresh = []
-        for _j, iou_thr in enumerate(iou_thrs):
-            num_instances = _result_dict['num_instances']
-            total_instance_count +=num_instances
-            max_clicks = _result_dict['max_clicks']
-            assert max_clicks == n_clicks_per_object*num_instances
-
-            ious = _result_dict['ious']
-            obj_ids = np.random.permutation(np.arange(0, num_instances))
-
-            scores_arr = np.array([_get_noc(ious[_id], iou_thr, n_clicks_per_object)
-                                   for _id in obj_ids], dtype=np.float)
-            noc = scores_arr[:, 0].astype(int)
-            iou_at_noc = scores_arr[:, 1]
-
-            cum_scores = np.cumsum(noc)
-            num_failed_objects = (noc >= n_clicks_per_object).sum()
-            success = (noc < n_clicks_per_object)
-            nci = noc.mean()
-            avg_iou_per_image = iou_at_noc.mean()
-
-            nci_list[_i, _j] = nci
-            # failed_objects = over_max + (num_instances - len(ious))
-            nof_objects_per_thresh.append(num_failed_objects)
-            nof_images_per_thresh.append(int(num_failed_objects > 0))
-            avg_iou_per_thresh.append(avg_iou_per_image)
-
-        nof_objects.append(np.array(nof_objects_per_thresh))
-        nof_images.append(np.array(nof_images_per_thresh))
-        avg_iou.append(avg_iou_per_thresh)
-
-    return nci_list.mean(axis=0), np.stack(nof_objects).sum(axis=0), \
-        np.stack(nof_images).sum(axis=0), [np.mean(avg_iou)], [total_instance_count]
-
-
 def main():
     args = parse_args()
     start = time.time()
 
     results = json.load(open(args.result_json, "r"))
     per_instance_ious = results['all_ious']
-    image_level_res = results['ious_per_image'] # list[{'ious':[obj1_ious,...]*n_obj,
-                                                # 'num_instances': int, 'max_clicks': int, filename:str}]
+    image_level_res = results['ious_per_image']  # list[{'ious':[obj1_ious,...]*n_obj,
+    # 'num_instances': int, 'max_clicks': int, filename:str}]
     np.random.seed(1987)
 
-    # scores = np.stack([
-    #     nci_per_object_limit(image_level_res, [0.85], n_clicks_per_object=args.n_clicks)
-    #     for _iter in range(args.n_iter)
-    # ]).squeeze(-1)
     scores = np.stack([
         compute_nci_metric(image_level_res, [0.85], n_clicks_per_object=args.n_clicks,
-                           object_ordering='best' if _iter == args.n_iter-1 else 'random')
-        for _iter in range(args.n_iter)
+                           object_ordering=strategy)
+        for strategy in ['best', 'worst', 'random']
     ]).squeeze(-1)
 
-    nci_easy_object_first, nof_easy_object_first, nfi_easy_object_first, nfo_extra_easy_object_first, \
-        nfi_extra_easy_object_first, iou_easy_object_first, _ = scores[-1]
-    scores = scores[:-1]
-    mean_nci, mean_nof, mean_nfi, mean_nfo_extra, mean_nfi_extra, mean_iou, instance_count = scores.mean(0)
-    best_nci, best_nof, best_nfi, best_nfo_extra, best_nfi_extra, best_iou, instance_count = scores.min(0)
-    worst_nci, worst_nof, worst_nfi, worst_nfo_extra, worst_nfi_extra, worst_iou, instance_count = scores.max(0)
+    mean_nci, mean_nof, mean_nfi, mean_nfo_extra, mean_nfi_extra, mean_iou, instance_count = scores[2]
+    best_nci, best_nof, best_nfi, best_nfo_extra, best_nfi_extra, best_iou, instance_count = scores[0]
+    worst_nci, worst_nof, worst_nfi, worst_nfo_extra, worst_nfi_extra, worst_iou, instance_count = scores[1]
 
     header, row1 = get_results_table(mean_nci, mean_nof, mean_nfi, mean_nfo_extra, mean_nfi_extra, mean_iou,
-                                    eval_type='Mean', instance_count=instance_count)
+                                     eval_type='Mean', instance_count=instance_count)
     _, row2 = get_results_table(worst_nci, worst_nof, worst_nfi, worst_nfo_extra, worst_nfi_extra, worst_iou,
-                                    eval_type='Worst', instance_count=instance_count)
+                                eval_type='Worst', instance_count=instance_count)
     _, row3 = get_results_table(best_nci, best_nof, best_nfi, best_nfo_extra, best_nfi_extra, best_iou,
-                                    eval_type='Best', instance_count=instance_count)
-    _, row4 = get_results_table(nci_easy_object_first, nof_easy_object_first, nfi_easy_object_first,
-                                nfo_extra_easy_object_first, nfi_extra_easy_object_first, iou_easy_object_first,
-                                eval_type='Easy first', instance_count=instance_count)
-    print(f'{header}\n{row1}\n{row2}\n{row3}\n{row4}')
+                                eval_type='Best', instance_count=instance_count)
+    print(f'{header}\n{row1}\n{row2}\n{row3}')
 
     logs_path = os.path.abspath(os.path.join(args.result_json, os.pardir))
     filename = args.result_json.split("/")[-1].split(".json")[0]

@@ -1,13 +1,16 @@
-import json
-import sys
-import pickle
 import argparse
+import json
+import pickle
+import random
+import sys
 import time
 from pathlib import Path
 
+import numpy as np
 # import cv2
 import torch
-import numpy as np
+
+from isegm.inference.dynamite_eval import dynamite_evaluation
 
 sys.path.insert(0, '.')
 from isegm.inference import utils
@@ -20,7 +23,7 @@ from isegm.inference.evaluation import evaluate_dataset, evaluate_dataset_multi_
 def parse_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('mode', choices=[ 'CDNet', 'Baseline', 'FocalClick', 'NoBRS', 'RGB-BRS', 'DistMap-BRS',
+    parser.add_argument('mode', choices=['CDNet', 'Baseline', 'FocalClick', 'NoBRS', 'RGB-BRS', 'DistMap-BRS',
                                          'f-BRS-A', 'f-BRS-B', 'f-BRS-C'],
                         help='')
 
@@ -31,7 +34,7 @@ def parse_args():
                                         'or an absolute path. The file extension can be omitted.')
 
     parser.add_argument('--model_dir', type=str, default='',
-                                   help='The path to the checkpoint.')
+                        help='The path to the checkpoint.')
 
     group_checkpoints.add_argument('--exp-path', type=str, default='',
                                    help='The relative path to the experiment with checkpoints.'
@@ -63,7 +66,14 @@ def parse_args():
     parser.add_argument('--clicks-limit', type=int, default=None)
     parser.add_argument('--eval-mode', type=str, default='cvpr',
                         help='Possible choices: cvpr, fixed<number> (e.g. fixed400, fixed600).')
-    parser.add_argument('--multi_instance', action='store_true', default=False, help="Enable multi instance evaluation strategy.")
+    parser.add_argument('--multi_instance', action='store_true', default=False,
+                        help="Enable multi instance evaluation strategy.")
+    parser.add_argument('--dynamite_eval', action='store_true', default=False,
+                        help="Enable multi instance evaluation strategy proposed in dynamite.")
+    parser.add_argument('--fuse_every_step', action='store_true', default=False,
+                        help="Fuse the predictions in every step. This is relevant only if dynamite_eval is set to True")
+    parser.add_argument('--dynamite_eval_strategy', default="best", choices=['best', 'worst', 'random'])
+    parser.add_argument('--random_id', default=1, type=int, help="id used to generate numpy random seed")
 
     parser.add_argument('--save-ious', action='store_true', default=False)
     parser.add_argument('--print-ious', action='store_true', default=False)
@@ -80,12 +90,16 @@ def parse_args():
                         help='Inference input size for the model')
 
     parser.add_argument('--target-crop-r', type=float, default=1.40,
-                                  help='Target Crop Expand Ratio')
-    
+                        help='Target Crop Expand Ratio')
+
     parser.add_argument('--focus-crop-r', type=float, default=1.40,
-                                  help='Focus Crop Expand Ratio')
+                        help='Focus Crop Expand Ratio')
 
     args = parser.parse_args()
+    print(args)
+    assert not args.multi_instance or not args.dynamite_eval, "Only one of flags in [multi_instance, dynamite_eval] " \
+                                                              "can be set."
+
     if args.cpu:
         args.device = torch.device('cpu')
     else:
@@ -120,7 +134,7 @@ def main():
     print_header = single_model_eval
     for dataset_name in args.datasets.split(','):
         dataset = utils.get_dataset(dataset_name, cfg)
-        #print(dataset_name)
+        # print(dataset_name)
 
         for checkpoint_path in checkpoints_list:
             model = utils.load_is_model(checkpoint_path, args.device)
@@ -130,41 +144,73 @@ def main():
                                       infer_size=args.infer_size,
                                       prob_thresh=args.thresh,
                                       predictor_params=predictor_params,
-                                      focus_crop_r = args.focus_crop_r,
-                                      #zoom_in_params=None)
+                                      focus_crop_r=args.focus_crop_r,
+                                      # zoom_in_params=None)
                                       zoom_in_params=zoomin_params)
 
             start = time.time()
             if args.multi_instance:
-              dataset_results = evaluate_dataset_multi_instance(dataset, predictor, pred_thr=args.thresh,
-                                                 max_iou_thr=args.target_iou,
-                                                 min_clicks=args.min_n_clicks,
-                                                 max_clicks=args.n_clicks,
-                                                 vis=args.vis,
-                                                 )
+                dataset_results = evaluate_dataset_multi_instance(dataset, predictor, pred_thr=args.thresh,
+                                                                  max_iou_thr=args.target_iou,
+                                                                  min_clicks=args.min_n_clicks,
+                                                                  max_clicks=args.n_clicks,
+                                                                  vis=args.vis,
+                                                                  )
+                row_name = args.mode if single_model_eval else checkpoint_path.stem
+                if args.iou_analysis:
+                    save_iou_analysis_data(args, dataset_name, logs_path,
+                                           logs_prefix, dataset_results,
+                                           model_name=args.model_name)
+
+                save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_results,
+                             save_ious=single_model_eval and args.save_ious,
+                             single_model_eval=single_model_eval,
+                             print_header=print_header)
+                print_header = False
+            elif args.dynamite_eval:
+                _iter = args.random_id if args.dynamite_eval_strategy == 'random' else 1
+                random.seed(1000 * _iter)
+                np.random.seed(1000 * _iter)
+                print(f"Running id {_iter} for strategy {args.dynamite_eval_strategy}")
+                dataset_results = dynamite_evaluation(dataset, predictor,
+                                                      max_iou_thr=args.target_iou,
+                                                      min_clicks=args.min_n_clicks,
+                                                      max_clicks=args.n_clicks,
+                                                      vis=args.vis,
+                                                      strategy=args.dynamite_eval_strategy,
+                                                      fuse_every_step=args.fuse_every_step
+                                                      )
+                dataset_results['model'] = "focalclick"
+                dataset_results['dataset'] = dataset_name
+                dataset_results['iou_threshold'] = args.target_iou
+                filename = f'{dataset_name}_{args.n_clicks}_{args.dynamite_eval_strategy}_{args.target_iou}_{_iter}.pickle' \
+                    if not args.fuse_every_step else f'{dataset_name}_fuse_every_step_{args.n_clicks}_{_iter}_' \
+                                                     f'{args.dynamite_eval_strategy}_{args.target_iou}.pickle'
+                result_file = logs_path / filename
+                with open(result_file, 'wb') as f:
+                    pickle.dump(dataset_results, f)
             else:
-            #vis_callback = get_prediction_vis_callback(logs_path, dataset_name, args.thresh) if args.vis else None
-              dataset_results = evaluate_dataset(dataset, predictor, pred_thr=args.thresh,
-                                                 max_iou_thr=args.target_iou,
-                                                 min_clicks=args.min_n_clicks,
-                                                 max_clicks=args.n_clicks,
-                                                 vis=args.vis,
-                                                 )
+                # vis_callback = get_prediction_vis_callback(logs_path, dataset_name, args.thresh) if args.vis else None
+                dataset_results = evaluate_dataset(dataset, predictor, pred_thr=args.thresh,
+                                                   max_iou_thr=args.target_iou,
+                                                   min_clicks=args.min_n_clicks,
+                                                   max_clicks=args.n_clicks,
+                                                   vis=args.vis,
+                                                   )
+                row_name = args.mode if single_model_eval else checkpoint_path.stem
+                if args.iou_analysis:
+                    save_iou_analysis_data(args, dataset_name, logs_path,
+                                           logs_prefix, dataset_results,
+                                           model_name=args.model_name)
 
-            end_time = time.time()
-            print(f"Total inference time {end_time - start}")
+                save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_results,
+                             save_ious=single_model_eval and args.save_ious,
+                             single_model_eval=single_model_eval,
+                             print_header=print_header)
+                print_header = False
 
-            row_name = args.mode if single_model_eval else checkpoint_path.stem
-            if args.iou_analysis:
-                save_iou_analysis_data(args, dataset_name, logs_path,
-                                       logs_prefix, dataset_results,
-                                       model_name=args.model_name)
-
-            save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_results,
-                         save_ious=single_model_eval and args.save_ious,
-                         single_model_eval=single_model_eval,
-                         print_header=print_header)
-            print_header = False
+        end_time = time.time()
+        print(f"Total inference time {end_time - start}")
 
 
 def get_predictor_and_zoomin_params(args, dataset_name):
@@ -217,7 +263,7 @@ def get_checkpoints_list_and_logs_path(args, cfg):
 
         logs_path = args.logs_path / exp_path.relative_to(cfg.EXPS_PATH)
     else:
-        #checkpoints_list = [Path(utils.find_checkpoint(cfg.INTERACTIVE_MODELS_PATH, args.checkpoint))]
+        # checkpoints_list = [Path(utils.find_checkpoint(cfg.INTERACTIVE_MODELS_PATH, args.checkpoint))]
         checkpoints_list = [Path(utils.find_checkpoint(args.model_dir, args.checkpoint))]
         logs_path = args.logs_path / 'others' / checkpoints_list[0].stem
 
@@ -233,35 +279,37 @@ def save_results(args, row_name, dataset_name, logs_path, logs_prefix, dataset_r
     mean_spc, mean_spi = utils.get_time_metrics(all_ious, elapsed_time)
     row_name = 'last' if row_name == 'last_checkpoint' else row_name
     model_name = str(logs_path.relative_to(args.logs_path)) + ':' + logs_prefix if logs_prefix else logs_path.stem
-    # per_click_iou = utils.get_per_click_iou(dataset_results['all_ious'])
+    per_click_iou = utils.get_per_click_iou(dataset_results['all_ious'])
 
     if 'ious_per_image' in dataset_results:
-      json.dump(dataset_results, open(logs_path / f'{dataset_name}_{args.eval_mode}_{args.mode}_{args.n_clicks}_multi_instance_raw.json', 'w+'),
-                indent=2)
-      ious_per_image = dataset_results['ious_per_image']
-      ious_fused = [val for ious_per_image in dataset_results['fused_ious'] for val in ious_per_image]
-      # assert isinstance(ious_per_image, dict)
-      noc_list, nof_objects_per_image, nof_images, nfo_fused = utils.compute_nci_metric(ious_per_image, iou_thrs)
-      header_per_image, table_row_per_image = utils.get_nic_results_table(noc_list, nof_images, nof_objects_per_image,
-                                                                          row_name, dataset_name, mean_spc, elapsed_time,
-                                                                          model_name=model_name,
-                                                                          instance_count=instance_count,
-                                                                          nfo_fused = nfo_fused)
+        json.dump(dataset_results, open(
+            logs_path / f'{dataset_name}_{args.eval_mode}_{args.mode}_{args.n_clicks}_multi_instance_raw.json', 'w+'),
+                  indent=2)
+        ious_per_image = dataset_results['ious_per_image']
+        ious_fused = [val for ious_per_image in dataset_results['fused_ious'] for val in ious_per_image]
+        # assert isinstance(ious_per_image, dict)
+        noc_list, nof_objects_per_image, nof_images, nfo_fused = utils.compute_nci_metric(ious_per_image, iou_thrs)
+        header_per_image, table_row_per_image = utils.get_nic_results_table(noc_list, nof_images, nof_objects_per_image,
+                                                                            row_name, dataset_name, mean_spc,
+                                                                            elapsed_time,
+                                                                            model_name=model_name,
+                                                                            instance_count=instance_count,
+                                                                            nfo_fused=nfo_fused)
 
-      print("\n\n------------- Per Image Evaluation -------------\n\n")
-      if print_header:
-        print(header_per_image)
-      print(table_row_per_image)
+        print("\n\n------------- Per Image Evaluation -------------\n\n")
+        if print_header:
+            print(header_per_image)
+        print(table_row_per_image)
 
-      log_path_per_image = logs_path / f'{args.eval_mode}_{args.mode}_{args.n_clicks}_per_image.txt'
-      if log_path_per_image.exists():
-        with open(log_path_per_image, 'a') as f:
-          f.write(table_row_per_image + '\n')
-      else:
-        with open(log_path_per_image, 'w') as f:
-          if print_header:
-            f.write(header_per_image + '\n')
-          f.write(table_row_per_image + '\n')
+        log_path_per_image = logs_path / f'{args.eval_mode}_{args.mode}_{args.n_clicks}_per_image.txt'
+        if log_path_per_image.exists():
+            with open(log_path_per_image, 'a') as f:
+                f.write(table_row_per_image + '\n')
+        else:
+            with open(log_path_per_image, 'w') as f:
+                if print_header:
+                    f.write(header_per_image + '\n')
+                f.write(table_row_per_image + '\n')
     else:
         dataset_results['per_click_iou'] = per_click_iou
         json.dump(dataset_results, open(
